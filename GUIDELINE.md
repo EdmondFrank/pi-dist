@@ -28,6 +28,15 @@ The binary needs **glibc >= 2.17** (highest symbol is `GLIBC_2.17`), so Ubuntu 1
 
 Cross-builds skip the local smoke test — `docker run --platform linux/amd64 ubuntu:18.04 /path/to/pi-linux-x64 --version` is the quick check, or just run it on the target.
 
+### Building for Android / Termux
+
+```bash
+./build.sh 1.5.0 bun-android-arm64        # bionic PIE, interpreter /system/bin/linker64
+./package.sh 1.5.0 android-arm64          # -> release/pi-1.5.0-android-arm64.tar.gz
+```
+
+Needs bun >= 1.4.4, which carries the `bun-linux-aarch64-android` runtime. The result links only `libc.so`, `libm.so`, `libdl.so` (all in Termux) and installs into `$PREFIX` instead of `~/.local`; `install.sh` detects Termux itself. `pi-web` is skipped — it is bun-packaged and Termux has no bun. Unpacking instructions and the Android-specific limits (noexec shared storage, phantom process killer, clipboard via `termux-api`) are in [TERMUX.md](TERMUX.md).
+
 The binary alone is not enough — `package.json` (version/app name) and the four asset entries (`theme/`, `assets/`, `export-html/`, `photon_rs_bg.wasm`) must travel with it.
 
 ## 1. Transfer
@@ -43,10 +52,10 @@ scp pi-1.5.0-linux-x64.tar.gz user@host:/tmp/
 ssh user@host
 mkdir -p ~/pi-bundle && tar xzf /tmp/pi-1.5.0-linux-x64.tar.gz -C ~/pi-bundle
 cd ~/pi-bundle
-# install.sh + config/ live in the repo; copy them across too:
-#   scp -r install.sh config user@host:~/pi-bundle/
-./install.sh --from ~/pi-bundle --dry-run     # inspect
-./install.sh --from ~/pi-bundle
+# In a packaged tarball install.sh sits next to the binary and finds it by itself;
+# from the repo, point at the bundle instead:
+./install.sh --dry-run                       # inspect (repo: ./install.sh --from ~/pi-bundle)
+./install.sh
 ```
 
 What it does, in order:

@@ -8,16 +8,35 @@
 #   ./install.sh --force         # overwrite existing config (backs up to *.bak)
 #   ./install.sh --no-mcp        # skip mcp.json (offline / no exhub hub)
 #   ./install.sh --no-web        # skip the browser dashboard (pi-web)
+#   ./install.sh --platform slug # force a build (android-arm64, linux-x64, …)
+#
+# Termux/Android is detected automatically: it installs the bionic build
+# (pi-android-arm64) into $PREFIX/bin + $PREFIX/lib/pi, and skips pi-web (bun).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FROM="$HERE/out"
+
+# Termux exports PREFIX=/data/data/com.termux/files/usr and TERMUX_VERSION, but its shell
+# still reports uname -s Linux / -m aarch64 — with a bionic loader, so the glibc builds
+# (linux-arm64) cannot run there. The matching build is android-arm64 (bionic PIE).
+TERMUX=0
+TERMUX_USR=""
+if [ -n "${TERMUX_VERSION:-}" ]; then TERMUX=1; fi
+case "${PREFIX:-}" in /data/data/com.termux/*) TERMUX=1; TERMUX_USR="$PREFIX" ;; esac
+
 PREFIX="$HOME/.local"
+if [ "$TERMUX" = 1 ]; then
+  if [ -z "$TERMUX_USR" ]; then TERMUX_USR="$(cd "$HOME/.." && pwd)/usr"; fi
+  PREFIX="$TERMUX_USR"   # == Termux $PREFIX, already on PATH
+fi
 AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 FORCE=0
 DRY=0
 WITH_MCP=1
 WITH_WEB=1
+if [ "$TERMUX" = 1 ]; then WITH_WEB=0; fi   # pi-web is bun-packaged; no bun on Termux
+PLATFORM_OVERRIDE="${PI_PLATFORM:-}"
 
 die() { echo "error: $*" >&2; exit 1; }
 say() { echo "== $*"; }
@@ -31,22 +50,39 @@ while [ $# -gt 0 ]; do
     --force)     FORCE=1; shift ;;
     --no-mcp)    WITH_MCP=0; shift ;;
     --no-web)    WITH_WEB=0; shift ;;
+    --web)       WITH_WEB=1; shift ;;
+    --platform)  PLATFORM_OVERRIDE="$2"; shift 2 ;;
     --dry-run)   DRY=1; shift ;;
-    -h|--help)   sed -n '2,10p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,16p' "$0"; exit 0 ;;
     *)           die "unknown option: $1" ;;
   esac
 done
 
 # ---------------------------------------------------------------- platform
-case "$(uname -s)/$(uname -m)" in
-  Darwin/arm64)        PLATFORM=darwin-arm64 ;;
-  Darwin/x86_64)       PLATFORM=darwin-x64 ;;
-  Linux/x86_64)        PLATFORM=linux-x64 ;;
-  Linux/aarch64|Linux/arm64) PLATFORM=linux-arm64 ;;
-  *) die "unsupported platform: $(uname -s) $(uname -m)" ;;
-esac
+if [ -n "$PLATFORM_OVERRIDE" ]; then
+  PLATFORM="$PLATFORM_OVERRIDE"
+elif [ "$TERMUX" = 1 ]; then
+  case "$(uname -m)" in
+    aarch64|arm64)            PLATFORM=android-arm64 ;;
+    x86_64|amd64)             PLATFORM=android-x64 ;;
+    *) die "unsupported Termux architecture: $(uname -m)" ;;
+  esac
+else
+  case "$(uname -s)/$(uname -m)" in
+    Darwin/arm64)        PLATFORM=darwin-arm64 ;;
+    Darwin/x86_64)       PLATFORM=darwin-x64 ;;
+    Linux/x86_64)        PLATFORM=linux-x64 ;;
+    Linux/aarch64|Linux/arm64) PLATFORM=linux-arm64 ;;
+    *) die "unsupported platform: $(uname -s) $(uname -m) (Termux on Android? use --platform android-arm64)" ;;
+  esac
+fi
 
 BIN="$FROM/pi-$PLATFORM"
+# Release tarballs ship the binary next to install.sh; build trees keep it under out/.
+if [ ! -f "$BIN" ] && [ ! -f "$FROM/pi-$PLATFORM-baseline" ] && [ -f "$HERE/pi-$PLATFORM" ]; then
+  FROM="$HERE"
+  BIN="$FROM/pi-$PLATFORM"
+fi
 if [ ! -f "$BIN" ] && [ -f "$FROM/pi-$PLATFORM-baseline" ]; then
   BIN="$FROM/pi-$PLATFORM-baseline"   # pre-AVX2 CPU build (older Xeons/Atoms)
   echo "note: using baseline binary $(basename "$BIN")"
@@ -60,7 +96,8 @@ BIN_DIR="$PREFIX/bin"
 # ---------------------------------------------------------------- binary
 say "platform $PLATFORM -> $LIB"
 run mkdir -p "$LIB" "$BIN_DIR"
-run install -m 0755 "$BIN" "$LIB/pi"
+run cp "$BIN" "$LIB/pi"   # cp+chmod, not install(1): Termux has no coreutils by default
+run chmod 0755 "$LIB/pi"
 for asset in package.json theme assets export-html photon_rs_bg.wasm; do
   [ -e "$FROM/$asset" ] || die "missing asset: $FROM/$asset"
   run rm -rf "$LIB/$asset"
@@ -185,10 +222,11 @@ fi
 
 # ---------------------------------------------------------------- verify
 say "verify"
+if [ "$TERMUX" = 1 ]; then VERIFY_PATH="$PREFIX/bin:/system/bin"; else VERIFY_PATH="/usr/bin:/bin:/usr/sbin:/sbin"; fi
 if [ "$DRY" = 1 ]; then
   echo "   [dry] $LIB/pi --version"
 else
-  env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin "$LIB/pi" --version
+  env -i PATH="$VERIFY_PATH" "$LIB/pi" --version
 fi
 
 cat <<EOF

@@ -16,10 +16,16 @@ cp "$BIN" "$STAGE/"
 cp "$HERE/out/package.json" "$HERE/out/photon_rs_bg.wasm" "$STAGE/"
 cp -R "$HERE/out/theme" "$HERE/out/assets" "$HERE/out/export-html" "$STAGE/"
 cp "$HERE/install.sh" "$HERE/README.md" "$HERE/GUIDELINE.md" "$STAGE/"
+[ -f "$HERE/TERMUX.md" ] && cp "$HERE/TERMUX.md" "$STAGE/" || true
 cp -R "$HERE/config" "$STAGE/"
 
 # Browser dashboard (optional; build it with ./build-web.sh).
-if [ -d "$HERE/out/pi-web" ]; then
+# Skipped on android-*: pi-web is bun-packaged and Termux has no bun.
+WITH_WEB=1
+case "$SLUG" in android-*) WITH_WEB=0 ;; esac
+if [ "$WITH_WEB" = 0 ]; then
+  echo "note: pi-web skipped (Termux has no bun)"
+elif [ -d "$HERE/out/pi-web" ]; then
   cp -R "$HERE/out/pi-web" "$STAGE/pi-web"
 else
   echo "note: out/pi-web missing — run ./build-web.sh to include the dashboard"

@@ -6,6 +6,7 @@ Built artifact: **pi 1.5.0**, single executable, ~77 MB, bun-embedded runtime.
 
 ```bash
 ./build.sh 1.5.0 bun-darwin-arm64    # build  -> out/
+./build.sh 1.5.0 bun-android-arm64    # Termux/Android (bionic PIE) -> out/pi-android-arm64
 ./install.sh                         # install -> ~/.local/{bin,lib/pi} + ~/.pi/agent
 ```
 
@@ -177,6 +178,7 @@ SECURITY.md              key handling + how to report
 build.sh                 build from the npm release (tarball -> bun compile -> assets)
 package.sh               stage binary + assets + config into release/<name>.tar.gz + sha256
 install.sh               install binary + config on a machine (no Node needed)
+TERMUX.md                unpack + install on Android (Termux), incl. known limits
 release/                 shippable tarballs (gitignored)
 out/                     build output: pi-<platform>, package.json, theme/, assets/, export-html/, photon_rs_bg.wasm
 config/
@@ -285,6 +287,7 @@ Sessions live under `$AGENT_DIR/sessions` (default `~/.pi/agent/sessions`) and a
 ## Limits
 
 - Per-platform build; no cross-arch fallback (`Exec format error` if wrong).
+- `android-arm64` is bun's `bun-linux-aarch64-android` runtime: the same `build.sh` works, the result links only `libc/libm/libdl` and runs on Termux (see [TERMUX.md](TERMUX.md)). `pi-web` is not shipped there — it is bun-packaged.
 - `mcp.json` is not part of the release tarball — render it with `install.sh`, or start from `config/mcp.json.example` and edit the URL.
 - `AGENTS.md`, the prompts, and most skills encode one person's workflow; treat them as a starting point, not as defaults.
 - pi itself is MIT and is not redistributed here — see [NOTICE](NOTICE) for bundled skill provenance.
