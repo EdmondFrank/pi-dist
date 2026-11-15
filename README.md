@@ -223,6 +223,41 @@ Two non-obvious requirements baked into `build.sh`:
 
 Do not add `--minify` / `--bytecode` — pi loads extensions and skills at runtime through `jiti` and resolves asset paths from `dirname(argv[0])`.
 
+## Web dashboard (pi-web)
+
+[pi-web](https://github.com/agegr/pi-web) is the browser UI for pi: sessions, files, Git diffs, terminals, models, MCP, skills. It is packaged here as the npm release, not built from source, because `@agegr/pi-web` already ships a prebuilt, pruned `.next` (7 MB):
+
+```bash
+./build-web.sh 0.17.0     # -> out/pi-web (466 MB, ~56 MB compressed)
+./install.sh              # also installs ~/.local/lib/pi-web + a pi-web shim
+```
+
+`install.sh --no-web` skips it; `package.sh` bundles `out/pi-web` into the release tarball automatically when present.
+
+**The target machine needs `bun`** (pi itself does not): the dashboard runs Next 16 on Bun. `pi-web` is a shim at `$PREFIX/bin/pi-web`:
+
+```bash
+curl -fsSL https://bun.sh/install | bash   # once per machine
+pi-web                                    # http://127.0.0.1:30141
+pi-web --port 8080 --hostname 0.0.0.0     # Pi Web password login: PI_WEB_PASSWORD=...
+pi-web status | stop | open
+```
+
+### Four adaptations `build-web.sh` makes
+
+| Problem | Cause | Adaptation |
+|---|---|---|
+| `Failed to load next.config.ts` | Next transpiles a TS config through `require.extensions`; Bun has none | `scripts/gen-next-config-mjs.mjs` derives `next.config.mjs` |
+| `findPackageJSON is not a function` → "MCP is off" | Bun lacks `module.findPackageJSON` (Node ≥ 22.14), and the chunk reaches it through a frozen ESM namespace | `scripts/patch-find-package-json.mjs` rewrites the call sites in `.next/server` chunks. A `--preload` shim cannot work: the CLI runs the server as a child process |
+| `pty.node` fails to load → terminal panel dead | shipped `linux-x64` prebuild needs glibc ≥ 2.28 (Ubuntu 18.04 has 2.27) | rebuilt from source with `node-gyp@10`; result needs only glibc 2.4/2.8 |
+| dependency resolution takes 10+ minutes | no lockfile in the npm tarball | `locks/pi-web-<version>/package-lock.json`, vendored from the release tag |
+
+Pruned from `node_modules` (466 MB instead of 799 MB): `@next/swc-*`, `**/*.map`, `next/dist/docs`, `caniuse-lite`, `@img/sharp-libvips-*`. `next/dist/build` must stay — `bin/next` requires `../build/output/log`.
+
+Use `PI_WEB_REGISTRY=https://registry.npmmirror.com ./build-web.sh` if the default registry is slow or blocked (the gitee npm mirror is unmaintained and returns 404s).
+
+**Networking note:** `http_proxy` in the environment also catches loopback, so `http://127.0.0.1:30141` returns 502. Keep `127.0.0.1,localhost,::1` in `no_proxy` — `::1` matters because `localhost` resolves there first and the hub is reached as `localhost:9069`.
+
 ## Config: what was stripped
 
 `settings.json` keeps `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `theme`, `hideThinkingBlock`, `enabledModels`, `compaction`. The `packages` array was removed:

@@ -18,6 +18,13 @@ cp -R "$HERE/out/theme" "$HERE/out/assets" "$HERE/out/export-html" "$STAGE/"
 cp "$HERE/install.sh" "$HERE/README.md" "$HERE/GUIDELINE.md" "$STAGE/"
 cp -R "$HERE/config" "$STAGE/"
 
+# Browser dashboard (optional; build it with ./build-web.sh).
+if [ -d "$HERE/out/pi-web" ]; then
+  cp -R "$HERE/out/pi-web" "$STAGE/pi-web"
+else
+  echo "note: out/pi-web missing — run ./build-web.sh to include the dashboard"
+fi
+
 TGZ="$HERE/release/pi-$VERSION-$SLUG.tar.gz"
 COPYFILE_DISABLE=1 tar --no-xattrs -czf "$TGZ" -C "$HERE/release" "pi-$VERSION-$SLUG" 2>/dev/null \
   || COPYFILE_DISABLE=1 tar czf "$TGZ" -C "$HERE/release" "pi-$VERSION-$SLUG"

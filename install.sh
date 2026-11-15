@@ -7,6 +7,7 @@
 #   ./install.sh --from dist --prefix /opt/pi --agent-dir /etc/pi
 #   ./install.sh --force         # overwrite existing config (backs up to *.bak)
 #   ./install.sh --no-mcp        # skip mcp.json (offline / no exhub hub)
+#   ./install.sh --no-web        # skip the browser dashboard (pi-web)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,6 +17,7 @@ AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 FORCE=0
 DRY=0
 WITH_MCP=1
+WITH_WEB=1
 
 die() { echo "error: $*" >&2; exit 1; }
 say() { echo "== $*"; }
@@ -28,6 +30,7 @@ while [ $# -gt 0 ]; do
     --agent-dir) AGENT_DIR="$2"; shift 2 ;;
     --force)     FORCE=1; shift ;;
     --no-mcp)    WITH_MCP=0; shift ;;
+    --no-web)    WITH_WEB=0; shift ;;
     --dry-run)   DRY=1; shift ;;
     -h|--help)   sed -n '2,10p' "$0"; exit 0 ;;
     *)           die "unknown option: $1" ;;
@@ -75,6 +78,50 @@ else
 exec "$LIB/pi" "\$@"
 EOF
   chmod 0755 "$SHIM"
+fi
+
+# ---------------------------------------------------------------- web dashboard
+WEB_SRC="$HERE/pi-web"
+[ -d "$WEB_SRC" ] || WEB_SRC="$FROM/pi-web"
+LIB_WEB="${PI_WEB_LIB:-$PREFIX/lib/pi-web}"
+WEB_SHIM="$BIN_DIR/pi-web"
+if [ "$WITH_WEB" = 0 ]; then
+  echo "   web: skipped (--no-web)"
+elif [ ! -d "$WEB_SRC" ]; then
+  echo "   web: no pi-web build found (run ./build-web.sh) — skipping dashboard"
+else
+  say "web $LIB_WEB"
+  run rm -rf "$LIB_WEB"
+  run mkdir -p "$LIB_WEB"
+  run cp -R "$WEB_SRC/." "$LIB_WEB/"
+
+  # pi-web runs on Node >= 22.19 or Bun; this repo assumes Bun.
+  WEB_RUNNER=""
+  if command -v bun >/dev/null 2>&1; then
+    WEB_RUNNER="$(command -v bun)"
+  elif [ -x "$HOME/.bun/bin/bun" ]; then
+    WEB_RUNNER="$HOME/.bun/bin/bun"
+  else
+    echo "   warning: bun not found — the pi-web dashboard needs it:"
+    echo "            curl -fsSL https://bun.sh/install | bash"
+  fi
+
+  say "web shim $WEB_SHIM"
+  if [ "$DRY" = 1 ]; then
+    echo "   [dry] write web shim (runner: ${WEB_RUNNER:-bun})"
+  elif [ -n "$WEB_RUNNER" ]; then
+    cat > "$WEB_SHIM" <<EOF
+#!/bin/sh
+# pi-web shim (bun). --preload supplies module.findPackageJSON, which Bun lacks.
+PI_WEB_SKIP_VERSION_CHECK=\${PI_WEB_SKIP_VERSION_CHECK:-1}
+export PI_WEB_SKIP_VERSION_CHECK
+exec "$WEB_RUNNER" --preload "$LIB_WEB/scripts/bun-preload.cjs" "$LIB_WEB/bin/pi-web.js" "\$@"
+EOF
+    chmod 0755 "$WEB_SHIM"
+  else
+    echo "   (no runner found; shim not written — install bun, then re-run)"
+    WEB_SHIM="$WEB_SHIM (missing bun)"
+  fi
 fi
 
 # ---------------------------------------------------------------- config
@@ -141,7 +188,25 @@ Installed.
   binary : $LIB/pi (+ assets in $LIB)
   shim   : $SHIM
   config : $AGENT_DIR
+EOF
+
+if [ "$WITH_WEB" = 1 ] && [ -d "$WEB_SRC" ]; then
+  cat <<EOF
+  web    : $LIB_WEB
+  web shim: $WEB_SHIM
+EOF
+fi
+
+cat <<EOF
 
 Add to PATH if needed:  export PATH="$BIN_DIR:\$PATH"
 Smoke test:             cd /tmp && pi -p "Reply with exactly: OK" --no-session
 EOF
+
+if [ "$WITH_WEB" = 1 ] && [ -d "$WEB_SRC" ]; then
+  cat <<EOF
+Dashboard:              pi-web            (http://127.0.0.1:30141)
+                        pi-web --help     port, hostname, --no-open
+                        pi-web status | stop | open
+EOF
+fi

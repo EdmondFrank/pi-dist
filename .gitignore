@@ -12,3 +12,6 @@ out/
 
 # releases
 release/
+
+# pi-web staging (fetched by build-web.sh)
+src-web/
