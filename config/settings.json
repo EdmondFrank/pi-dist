@@ -3,7 +3,7 @@
   "defaultProvider": "exhub",
   "defaultModel": "deepseek-v4.1-flash",
   "defaultThinkingLevel": "high",
-  "theme": "solo",
+  "theme": "dark",
   "hideThinkingBlock": false,
   "enabledModels": [
     "exhub/deepseek-v4.1-flash",

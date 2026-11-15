@@ -42,6 +42,24 @@ die() { echo "error: $*" >&2; exit 1; }
 say() { echo "== $*"; }
 run() { if [ "$DRY" = 1 ]; then echo "   [dry] $*"; else "$@"; fi; }
 
+# Render ${VAR} placeholders in config/*.tmpl. perl is not part of a default Termux
+# install, so fall back to sed (| delimiter, since the values are URLs).
+render_tmpl() {   # $1 template, $2 output, then the variable names to substitute
+  local tpl="$1" out="$2" v val list="" args=()
+  shift 2
+  if [ -z "${PI_NO_PERL:-}" ] && command -v perl >/dev/null 2>&1; then
+    for v in "$@"; do list="${list}s/\\\$\{$v\}/\$ENV{$v}/g; "; done
+    perl -pe "$list" "$tpl" > "$out"
+  else
+    for v in "$@"; do
+      val="${!v}"
+      val="${val//\\/\\\\}"; val="${val//|/\\|}"; val="${val//&/\\&}"
+      args+=(-e "s|\${$v}|$val|g")
+    done
+    sed "${args[@]}" "$tpl" > "$out"
+  fi
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --from)      FROM="$2"; shift 2 ;;
@@ -170,8 +188,10 @@ else
   [ -e "$AGENT_DIR/settings.json" ] && run cp "$AGENT_DIR/settings.json" "$AGENT_DIR/settings.json.bak"
   run cp "$HERE/config/settings.json" "$AGENT_DIR/settings.json"
   run cp "$HERE/config/AGENTS.md" "$AGENT_DIR/AGENTS.md"
+  # merge-copy (".") so a re-run with --force does not nest skills/skills/ inside AGENT_DIR
   for d in skills prompts extensions agents; do
-    run cp -R "$HERE/config/$d" "$AGENT_DIR/$d"
+    run mkdir -p "$AGENT_DIR/$d"
+    run cp -R "$HERE/config/$d/." "$AGENT_DIR/$d/"
   done
 fi
 
@@ -194,9 +214,9 @@ else
   if [ "$DRY" = 1 ]; then
     echo "   [dry] render from config/models.json.tmpl"
   else
+    if [ -e "$AGENT_DIR/models.json" ]; then run cp "$AGENT_DIR/models.json" "$AGENT_DIR/models.json.bak"; fi
     EXHUB_BASE_URL="$EXHUB_BASE_URL" EXHUB_API_KEY="$EXHUB_API_KEY" \
-      perl -pe 's/\$\{EXHUB_BASE_URL\}/$ENV{EXHUB_BASE_URL}/g; s/\$\{EXHUB_API_KEY\}/$ENV{EXHUB_API_KEY}/g' \
-      "$HERE/config/models.json.tmpl" > "$AGENT_DIR/models.json"
+      render_tmpl "$HERE/config/models.json.tmpl" "$AGENT_DIR/models.json" EXHUB_BASE_URL EXHUB_API_KEY
     chmod 600 "$AGENT_DIR/models.json"
   fi
 fi
@@ -213,9 +233,9 @@ else
   if [ "$DRY" = 1 ]; then
     echo "   [dry] render from config/mcp.json.tmpl"
   else
+    if [ -e "$AGENT_DIR/mcp.json" ]; then run cp "$AGENT_DIR/mcp.json" "$AGENT_DIR/mcp.json.bak"; fi
     EXHUB_ORIGIN="$EXHUB_ORIGIN" PI_PROJECT_DIR="$PI_PROJECT_DIR" \
-      perl -pe 's/\$\{EXHUB_ORIGIN\}/$ENV{EXHUB_ORIGIN}/g; s/\$\{PI_PROJECT_DIR\}/$ENV{PI_PROJECT_DIR}/g' \
-      "$HERE/config/mcp.json.tmpl" > "$AGENT_DIR/mcp.json"
+      render_tmpl "$HERE/config/mcp.json.tmpl" "$AGENT_DIR/mcp.json" EXHUB_ORIGIN PI_PROJECT_DIR
     chmod 600 "$AGENT_DIR/mcp.json"
   fi
 fi
@@ -247,7 +267,7 @@ fi
 cat <<EOF
 
 Add to PATH if needed:  export PATH="$BIN_DIR:\$PATH"
-Smoke test:             cd /tmp && pi -p "Reply with exactly: OK" --no-session
+Smoke test:             pi -p "Reply with exactly: OK" --no-session
 EOF
 
 if [ "$WITH_WEB" = 1 ] && [ -d "$WEB_SRC" ]; then

@@ -11,8 +11,9 @@ Android shared storage (`/sdcard`, `~/storage/downloads`) is mounted **noexec**,
 cannot start from there. Move the tarball into Termux's own filesystem first:
 
 ```bash
-pkg install tar
-termux-setup-storage                 # once, to reach ~/storage/downloads
+pkg install tar termux-api            # tar to unpack, termux-api for clipboard
+pkg install fd ripgrep                # pi warns about these on first start; both speed up search
+termux-setup-storage                  # once, to reach ~/storage/downloads
 cd ~
 tar xzf ~/storage/downloads/pi-1.5.0-android-arm64.tar.gz
 cd pi-1.5.0-android-arm64
