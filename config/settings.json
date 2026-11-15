@@ -1,0 +1,31 @@
+{
+  "$schema": "https://pi.dev/schema/settings.json",
+  "defaultProvider": "exhub",
+  "defaultModel": "deepseek-v4.1-flash",
+  "defaultThinkingLevel": "high",
+  "theme": "solo",
+  "hideThinkingBlock": false,
+  "enabledModels": [
+    "exhub/deepseek-v4.1-flash",
+    "exhub/deepseek-v4-flash",
+    "exhub/qwen3.7-max",
+    "exhub/qwen3.7-plus",
+    "exhub/qwen3.6-plus",
+    "exhub/kimi-k2.7-code",
+    "exhub/kimi-k2.6",
+    "exhub/glm-5.2",
+    "exhub/MiniMax-M3.1-Flash"
+  ],
+  "compaction": {
+    "modelOverrides": {
+      "exhub/MiniMax-M3.1-Flash": {
+        "reserveTokens": 132000,
+        "keepRecentTokens": 20000
+      },
+      "exhub/deepseek-v4.1-flash": {
+        "reserveTokens": 850000,
+        "keepRecentTokens": 20000
+      }
+    }
+  }
+}

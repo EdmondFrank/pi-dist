@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# Install a self-contained pi binary + portable config on a new machine.
+# No Node.js required: the binary embeds its own runtime.
+#
+#   ./install.sh                 # install into ~/.local/{bin,lib/pi} + ~/.pi/agent
+#   ./install.sh --dry-run       # show what would happen
+#   ./install.sh --from dist --prefix /opt/pi --agent-dir /etc/pi
+#   ./install.sh --force         # overwrite existing config (backs up to *.bak)
+#   ./install.sh --no-mcp        # skip mcp.json (offline / no exhub hub)
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FROM="$HERE/out"
+PREFIX="$HOME/.local"
+AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+FORCE=0
+DRY=0
+WITH_MCP=1
+
+die() { echo "error: $*" >&2; exit 1; }
+say() { echo "== $*"; }
+run() { if [ "$DRY" = 1 ]; then echo "   [dry] $*"; else "$@"; fi; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --from)      FROM="$2"; shift 2 ;;
+    --prefix)    PREFIX="$2"; shift 2 ;;
+    --agent-dir) AGENT_DIR="$2"; shift 2 ;;
+    --force)     FORCE=1; shift ;;
+    --no-mcp)    WITH_MCP=0; shift ;;
+    --dry-run)   DRY=1; shift ;;
+    -h|--help)   sed -n '2,10p' "$0"; exit 0 ;;
+    *)           die "unknown option: $1" ;;
+  esac
+done
+
+# ---------------------------------------------------------------- platform
+case "$(uname -s)/$(uname -m)" in
+  Darwin/arm64)        PLATFORM=darwin-arm64 ;;
+  Darwin/x86_64)       PLATFORM=darwin-x64 ;;
+  Linux/x86_64)        PLATFORM=linux-x64 ;;
+  Linux/aarch64|Linux/arm64) PLATFORM=linux-arm64 ;;
+  *) die "unsupported platform: $(uname -s) $(uname -m)" ;;
+esac
+
+BIN="$FROM/pi-$PLATFORM"
+if [ ! -f "$BIN" ] && [ -f "$FROM/pi-$PLATFORM-baseline" ]; then
+  BIN="$FROM/pi-$PLATFORM-baseline"   # pre-AVX2 CPU build (older Xeons/Atoms)
+  echo "note: using baseline binary $(basename "$BIN")"
+fi
+[ -f "$BIN" ] || die "missing $BIN (build it: ./build.sh 1.5.0 bun-$PLATFORM)"
+[ -f "$FROM/package.json" ] || die "missing $FROM/package.json (needed for --version / app name)"
+
+LIB="${PI_LIB:-$PREFIX/lib/pi}"
+BIN_DIR="$PREFIX/bin"
+
+# ---------------------------------------------------------------- binary
+say "platform $PLATFORM -> $LIB"
+run mkdir -p "$LIB" "$BIN_DIR"
+run install -m 0755 "$BIN" "$LIB/pi"
+for asset in package.json theme assets export-html photon_rs_bg.wasm; do
+  [ -e "$FROM/$asset" ] || die "missing asset: $FROM/$asset"
+  run rm -rf "$LIB/$asset"
+  if [ -d "$FROM/$asset" ]; then run cp -R "$FROM/$asset" "$LIB/$asset";
+  else run cp "$FROM/$asset" "$LIB/$asset"; fi
+done
+
+SHIM="$BIN_DIR/pi"
+say "shim $SHIM"
+if [ "$DRY" = 1 ]; then
+  echo "   [dry] write shim"
+else
+  cat > "$SHIM" <<EOF
+#!/bin/sh
+exec "$LIB/pi" "\$@"
+EOF
+  chmod 0755 "$SHIM"
+fi
+
+# ---------------------------------------------------------------- config
+say "config $AGENT_DIR"
+if [ -e "$AGENT_DIR/settings.json" ] && [ "$FORCE" = 0 ]; then
+  echo "   settings.json exists — keeping it (use --force to replace, backs up to .bak)"
+else
+  run mkdir -p "$AGENT_DIR"
+  [ -e "$AGENT_DIR/settings.json" ] && run cp "$AGENT_DIR/settings.json" "$AGENT_DIR/settings.json.bak"
+  run cp "$HERE/config/settings.json" "$AGENT_DIR/settings.json"
+  run cp "$HERE/config/AGENTS.md" "$AGENT_DIR/AGENTS.md"
+  for d in skills prompts extensions agents; do
+    run cp -R "$HERE/config/$d" "$AGENT_DIR/$d"
+  done
+fi
+
+# ---------------------------------------------------------------- provider
+EXHUB_BASE_URL="${EXHUB_BASE_URL:-http://localhost:9069/openai/v1}"
+EXHUB_API_KEY="${EXHUB_API_KEY:-exhub-local}"
+if [ -e "$AGENT_DIR/models.json" ] && [ "$FORCE" = 0 ]; then
+  echo "   models.json exists — keeping it"
+else
+  say "models.json (provider exhub -> $EXHUB_BASE_URL)"
+  if [ "$DRY" = 1 ]; then
+    echo "   [dry] render from config/models.json.tmpl"
+  else
+    EXHUB_BASE_URL="$EXHUB_BASE_URL" EXHUB_API_KEY="$EXHUB_API_KEY" \
+      perl -pe 's/\$\{EXHUB_BASE_URL\}/$ENV{EXHUB_BASE_URL}/g; s/\$\{EXHUB_API_KEY\}/$ENV{EXHUB_API_KEY}/g' \
+      "$HERE/config/models.json.tmpl" > "$AGENT_DIR/models.json"
+    chmod 600 "$AGENT_DIR/models.json"
+  fi
+fi
+
+# ---------------------------------------------------------------- MCP
+EXHUB_ORIGIN="${EXHUB_ORIGIN:-${EXHUB_BASE_URL%/openai/v1}}"
+PI_PROJECT_DIR="${PI_PROJECT_DIR:-$PWD}"
+if [ "$WITH_MCP" = 0 ]; then
+  echo "   MCP: skipped (--no-mcp)"
+elif [ -e "$AGENT_DIR/mcp.json" ] && [ "$FORCE" = 0 ]; then
+  echo "   mcp.json exists — keeping it"
+else
+  say "mcp.json ($(grep -c '"url"' "$HERE/config/mcp.json.tmpl") servers via $EXHUB_ORIGIN)"
+  if [ "$DRY" = 1 ]; then
+    echo "   [dry] render from config/mcp.json.tmpl"
+  else
+    EXHUB_ORIGIN="$EXHUB_ORIGIN" PI_PROJECT_DIR="$PI_PROJECT_DIR" \
+      perl -pe 's/\$\{EXHUB_ORIGIN\}/$ENV{EXHUB_ORIGIN}/g; s/\$\{PI_PROJECT_DIR\}/$ENV{PI_PROJECT_DIR}/g' \
+      "$HERE/config/mcp.json.tmpl" > "$AGENT_DIR/mcp.json"
+    chmod 600 "$AGENT_DIR/mcp.json"
+  fi
+fi
+
+# ---------------------------------------------------------------- verify
+say "verify"
+if [ "$DRY" = 1 ]; then
+  echo "   [dry] $LIB/pi --version"
+else
+  env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin "$LIB/pi" --version
+fi
+
+cat <<EOF
+
+Installed.
+  binary : $LIB/pi (+ assets in $LIB)
+  shim   : $SHIM
+  config : $AGENT_DIR
+
+Add to PATH if needed:  export PATH="$BIN_DIR:\$PATH"
+Smoke test:             cd /tmp && pi -p "Reply with exactly: OK" --no-session
+EOF

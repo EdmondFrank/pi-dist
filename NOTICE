@@ -1,0 +1,32 @@
+# Third-party notices
+
+This repository holds build scripts and portable configuration for the
+[pi coding agent](https://pi.dev). It does not redistribute pi, its sources, or a
+compiled binary: `build.sh` downloads the npm release at build time.
+
+## Runtime (not redistributed)
+
+| Component | License | Notes |
+|---|---|---|
+| `@earendil-works/pi-coding-agent` | MIT | fetched with `npm pack` during `build.sh` |
+| Bun | MIT | embedded by `bun build --compile` into the produced binary only |
+
+## Bundled skills
+
+`config/skills/` mixes skills written for this dist with material adapted from
+public projects. Adapted items keep their upstream license; the table lists the
+canonical source. Open an issue if something is missing or misattributed.
+
+| Skill | Upstream | License |
+|---|---|---|
+| `anatomy` | github.com/MiniMax-AI/minimax-code | MIT, © 2026 Ryan (`config/skills/anatomy/LICENSE`) |
+| `book-to-skill` | github.com/agentskills/agentskills | MIT, © 2025 virgiliojr94 (`config/skills/book-to-skill/LICENSE.md`) |
+| `pyinfra` | github.com/pyinfra-dev/pyinfra | MIT (documentation-derived references) |
+| `bruno` | github.com/usebruno/bruno | MIT (OpenCollection schema) |
+| `code-simplifier` | github.com/anthropics/claude-plugins-official | see upstream |
+| `nanoxml` | github.com/justrach/nanoxml | see upstream |
+| `skill-creator` | public skill-authoring template, upstream not recorded | see upstream |
+
+The remaining skills, `config/AGENTS.md`, `config/prompts/`, `config/agents/`,
+and `config/extensions/` are original content released under this repository's
+[MIT license](LICENSE). They contain no copied third-party source code.

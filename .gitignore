@@ -1,0 +1,14 @@
+# build inputs (reproducible from npm)
+src/
+*.tgz
+
+# build outputs (77 MB binaries; publish separately / release assets)
+out/
+!out/.gitkeep
+
+# misc
+.DS_Store
+*.log
+
+# releases
+release/

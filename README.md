@@ -1,0 +1,258 @@
+# pi-dist-build
+
+Self-contained [pi coding agent](https://pi.dev) + portable config, so a fresh machine gets a working agent without installing Node.js.
+
+Built artifact: **pi 1.5.0**, single executable, ~77 MB, bun-embedded runtime.
+
+```bash
+./build.sh 1.5.0 bun-darwin-arm64    # build  -> out/
+./install.sh                         # install -> ~/.local/{bin,lib/pi} + ~/.pi/agent
+```
+
+## Usage
+
+The binary and its assets live in `$PREFIX/lib/pi` (`~/.local/lib/pi`) behind a `pi` shim; config lives in `$PI_CODING_AGENT_DIR` (default `~/.pi/agent`).
+
+### ExHub provider
+
+The dist is built around a local **ExHub** hub: one process on `http://localhost:9069` that serves an OpenAI-compatible API at `/openai/v1` (230 models) and MCP servers at `/<name>/mcp` (17 are used here). No per-provider keys or accounts are involved.
+
+`install.sh` renders two files from the templates, so a real key never has to be committed:
+
+| File | From | Contents |
+|---|---|---|
+| `$AGENT_DIR/models.json` (0600) | `config/models.json.tmpl` | provider `exhub` + `${EXHUB_BASE_URL}`, `${EXHUB_API_KEY}`, 16 model definitions |
+| `$AGENT_DIR/mcp.json` (0600) | `config/mcp.json.tmpl` | 17 servers at `${EXHUB_ORIGIN}/<name>/mcp`; `desktop`/`lua` also send `x-project-dir: ${PI_PROJECT_DIR}` |
+
+Install-time variables:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `EXHUB_BASE_URL` | `http://localhost:9069/openai/v1` | OpenAI-compatible endpoint written into `models.json` |
+| `EXHUB_API_KEY` | `exhub-local` | value written into `models.json`; the local hub ignores it |
+| `EXHUB_ORIGIN` | `EXHUB_BASE_URL` without `/openai/v1` | origin for every MCP URL |
+| `PI_PROJECT_DIR` | `$PWD` | `x-project-dir` header for the `desktop`/`lua` tools |
+| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | where the config is written |
+
+```bash
+./install.sh                                                     # local hub, defaults
+EXHUB_BASE_URL=http://hub.example.com:9069/openai/v1 ./install.sh   # hub on another host
+EXHUB_API_KEY='$EXHUB_API_KEY' ./install.sh --force              # keep the key in the environment
+./install.sh --no-mcp                                            # models only, no hub tools
+```
+
+`models.json`'s `apiKey` and `headers` values resolve a literal string, `"$NAME"` environment interpolation, or `"!command"` output — so `"apiKey": "$EXHUB_API_KEY"` with `export EXHUB_API_KEY=…` keeps the secret out of the file. `baseUrl` is literal, so it is fixed at install time: re-run `install.sh --force` after changing the hub address, or edit `models.json` and `/reload`. The same `${VAR}` / `!command` expansion works in `mcp.json` `env` and `headers`.
+
+Verify the wiring:
+
+```bash
+curl -s localhost:9069/openai/v1/models | head -c 120   # hub up: 230 models, no auth needed
+pi auth check --model exhub/deepseek-v4.1-flash        # provider reachable, key accepted
+pi mcp list                                            # 17 servers connected
+```
+
+Without a hub, point the provider at any OpenAI-compatible endpoint (edit `baseUrl`/`apiKey` in `models.json`, or add a second provider block) and pass `--no-mcp`. Each model entry (`id`, `name`, `reasoning`, `input`, `contextWindow`, `maxTokens`, `cost`) is what `pi --list-models` shows and what compaction budgeting uses. Change the default model in `settings.json` (`defaultProvider`/`defaultModel`) or with `pi config`.
+
+### Sessions
+
+```bash
+pi                       # interactive TUI in the current directory
+pi -c                    # continue this directory's most recent session
+pi -r                    # pick a session from a list
+pi --session <id|path>   # open a specific session
+pi --fork <id>           # branch a session into this directory
+pi --no-session          # ephemeral, writes nothing
+```
+
+Sessions are written to `$AGENT_DIR/sessions/<cwd-slug>/<ts>_<id>.jsonl` — JSONL v3, the same format Raft writes to `.pi-sessions`, so they can be copied between the two.
+
+### Non-interactive / scripting
+
+```bash
+pi -p "explain src/main.ts"                 # print the answer and exit
+pi --mode json -p "list the TODOs" > out.json
+git diff | pi -p "review this diff"         # stdin is passed in
+pi -p @src/app.ts "what does this do?"      # attach files with @
+pi --no-session -p "what is 2+2"            # don't persist a session
+```
+
+`--mode` takes `text` (default), `json`, or `rpc`.
+
+### Models
+
+Default is `exhub/deepseek-v4.1-flash` at thinking `high` (`config/settings.json`).
+
+```bash
+pi --list-models                        # everything the catalog knows
+pi --list-models kimi                   # fuzzy search
+pi --model exhub/kimi-k2.7-code         # one-off model
+pi --model exhub/glm-5.2:high           # model + thinking level
+pi --thinking off -p "..."              # off|minimal|low|medium|high|xhigh|max
+```
+
+Inside a session `Ctrl+P` cycles the 9 `enabledModels`; add to that array in `settings.json` to extend the ring.
+
+### Tools and permissions
+
+```bash
+pi --tools 'read,bash,edit'   # allowlist (patterns allowed)
+pi -xt 'bash'                 # denylist, applies to MCP tools too
+pi -nbt                       # keep extension/MCP tools, drop built-ins
+pi -nt                        # no tools at all
+pi -a                         # trust project-local .pi/ files for this run
+```
+
+### MCP
+
+`install.sh` renders `config/mcp.json.tmpl` into `$AGENT_DIR/mcp.json` with 17 servers.
+
+```bash
+pi mcp list                                  # state, tool counts, errors (exits 1 on failure)
+pi mcp add mem --url http://localhost:9069/memory/mcp
+pi --no-mcp -p "..."                         # run with every server disabled
+```
+
+Every bundled server uses `codemode` exposure, so tools are reached through the `lua` codemode namespace instead of one tool per MCP tool. Per-server `exposure` (`codemode` | `direct` | `deferred` | `hidden`) is editable in `mcp.json`, or with `/mcp` inside a session.
+
+### Skills, prompts, subagents
+
+```
+$AGENT_DIR/skills/<name>/SKILL.md    49 bundled — /skill:<name> or auto-selected
+$AGENT_DIR/prompts/<name>.md         2 bundled (plan, handoff) — /<name>
+$AGENT_DIR/agents/<name>.md          8 bundled subagents (worker, planner, scout, …)
+$AGENT_DIR/AGENTS.md                 global instructions, prepended to every session
+```
+
+```bash
+pi --skill ./SKILL.md -p "..."       # load an extra skill
+pi --prompt-template ./tmpl.md       # load an extra prompt template
+pi -ns -np                           # disable skills / prompt templates
+```
+
+The bundled subagents call `solo_tool`, so they only work after `pi install git:github.com/HazAT/pi-solo`.
+
+### Recipes
+
+| Task | Command |
+|---|---|
+| Explain a repo | `pi -p @README.md "summarize this project"` |
+| Review staged changes | `git diff --staged \| pi -p "review for bugs"` |
+| Machine-readable output | `pi --mode json -p "list files over 1MB"` |
+| Ephemeral question | `pi --no-session -p "what does jiti do?"` |
+| No startup network | `pi --offline -p "..."` |
+| Export a session | `pi --export <session.jsonl> out.html` |
+| Check provider auth | `pi auth check --model exhub/deepseek-v4.1-flash` |
+
+## Why
+
+Raft's agents (`raft-computer`) do **not** spawn the `pi` CLI — the daemon imports `@earendil-works/pi-coding-agent` in-process (`packages/daemon/src/drivers/pi.ts`) and the shipped SEA bundles `@earendil-works/pi-coding-agent@1.5.0`. This repo reproduces that runtime as a standalone binary: same SDK version, no daemon, no Node.
+
+`pi --version` here reports `1.5.0`, i.e. what Raft actually runs — not `0.1.0` (the Zig rewrite at `~/.cargo/bin/pi`) and not `1.0.63` (`runtime-cli-versions.json`, which is the Raft runtime slot).
+
+## Verified (2026-11-15, darwin-arm64)
+
+| Check | Result |
+|---|---|
+| `--version` | `1.5.0` |
+| `--help` | full CLI surface |
+| no Node on PATH (`env -i PATH=/usr/bin:/bin`) | `1.5.0` |
+| skills + extensions load (jiti, compiled) | ✅ |
+| isolated `PI_CODING_AGENT_DIR` | ✅ |
+| end-to-end `install.sh` into clean prefix, then `pi -p …` | ✅ |
+| session writer | ✅ `$AGENT_DIR/sessions/<cwd-slug>/<ts>_<id>.jsonl` |
+| Ubuntu 18.04 amd64 (Docker, glibc 2.27) | ✅ install + model + codemode tool call |
+| MCP: 17 servers connect (`pi mcp list`) | ✅ all connected |
+| codemode + MCP tool call (`todo get_items`) | ✅ |
+| bundled skills / subagents | 49 skills, 8 agents |
+| photon wasm / image tools | ⚠️ untested (needs a vision model) |
+| TUI theme rendering | ⚠️ untested (headless only) |
+
+## Layout
+
+```
+LICENSE                  MIT (this repository)
+NOTICE                   provenance for bundled third-party skills
+SECURITY.md              key handling + how to report
+build.sh                 build from the npm release (tarball -> bun compile -> assets)
+package.sh               stage binary + assets + config into release/<name>.tar.gz + sha256
+install.sh               install binary + config on a machine (no Node needed)
+release/                 shippable tarballs (gitignored)
+out/                     build output: pi-<platform>, package.json, theme/, assets/, export-html/, photon_rs_bg.wasm
+config/
+  settings.json          portable settings — packages[] removed (agent starts bare)
+  models.json.tmpl       provider template: ${EXHUB_BASE_URL} / ${EXHUB_API_KEY}
+  mcp.json.tmpl          17 MCP servers, ${EXHUB_ORIGIN} + ${PI_PROJECT_DIR}
+  mcp.json.example       single-server example (LAN URL, not installed)
+  AGENTS.md              global agent instructions
+  skills/                49 skills: ~/.pi/agent (13) + ~/.aider-desk (36)
+  prompts/ extensions/   2 prompts, 3 extensions from ~/.pi/agent
+  agents/                8 subagent definitions from ~/.pi/agent/agents
+src/                     extracted npm release + node_modules (gitignored, reproducible)
+```
+
+Binaries (`out/`) and `src/` are gitignored — ship `out/` as a release tarball, rebuild via `build.sh`.
+
+### Imported from `~/.aider-desk`
+
+| Source | What was taken | Notes |
+|---|---|---|
+| `mcp-servers.json` | 22 servers → 17 in `mcp.json.tmpl` | host rewritten to `${EXHUB_ORIGIN}`; `mcp-hub` dropped (duplicates every tool), `gitgud` dropped (404 on the hub) |
+| `skills/` (44) | 36 new skills | deduped against `~/.pi/agent/skills`; internal-infrastructure skills dropped for the public release; `examples/ evals/ tests/ corpus/ fixtures/` and files >200 KB pruned |
+| `agents/*/config.json` | **not** ported | AiderDesk agents are tool-approval profiles, not pi agent files |
+| `prompts/system-prompt.hbs` | **not** ported | Handlebars; pi prompts are Markdown + frontmatter |
+| `extensions/` (48 MB) | **not** ported | different extension API |
+
+The 8 bundled agents (`worker`, `planner`, `scout`, …) use `solo_tool`, so they only fully work after `pi install git:github.com/HazAT/pi-solo`.
+
+## Build
+
+Requires `bun` + `npm` on the **build** machine only (target needs neither).
+
+```bash
+cd ~/Code/pi-dist-build
+export https_proxy=http://127.0.0.1:7890 http_proxy=$https_proxy   # if needed
+./build.sh 1.5.0 bun-darwin-arm64
+./build.sh 1.5.0 bun-linux-x64       # emit for another target
+```
+
+Two non-obvious requirements baked into `build.sh`:
+
+1. **`package.json` must sit next to the binary.** `VERSION`/`APP_NAME` come from `getPackageJsonPath()` = the exe directory; without it `--version` prints `0.0.0`.
+2. **Assets must sit next to the binary**: `theme/`, `assets/`, `export-html/`, `photon_rs_bg.wasm`.
+3. **The codemode worker must be an extra entrypoint.** `dist/config.js` (`resolveCodemodeWorkerSpecifier`) returns the literal `"./src/extensions/codemode/worker.ts"` for a bun binary, so `build.sh` copies `dist/bundle/chunks/codemode-worker.js` to that path and compiles both entrypoints. Skip it and every codemode/MCP tool call fails with `ModuleNotFound resolving "./src/extensions/codemode/worker.ts"`.
+
+Do not add `--minify` / `--bytecode` — pi loads extensions and skills at runtime through `jiti` and resolves asset paths from `dirname(argv[0])`.
+
+## Config: what was stripped
+
+`settings.json` keeps `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `theme`, `hideThinkingBlock`, `enabledModels`, `compaction`. The `packages` array was removed:
+
+```diff
+-  "packages": [
+-    "git:github.com/pasky/chrome-cdp-skill",
+-    "git:github.com/HazAT/pi-parallel",
+-    "git:github.com/HazAT/pi-solo"
+-  ],
+```
+
+Reason: on first run in a new agent dir pi installs those entries with a package manager, and `dist/package-manager-cli.js` prefers **npm/pnpm** (bun only as a last resort). On a Node-less box that fails or stalls for ~20 s. Re-add them later with `pi install <source>` once a package manager exists — or vendor them into `config/extensions/`.
+
+## Updating
+
+```bash
+./build.sh <new-version> bun-darwin-arm64
+./install.sh --force          # replaces binary + config, backs up settings.json -> .bak
+```
+
+Sessions live under `$AGENT_DIR/sessions` (default `~/.pi/agent/sessions`) and are untouched by `--force`; they are the same JSONL v3 format Raft writes to `.pi-sessions`.
+
+## Limits
+
+- Per-platform build; no cross-arch fallback (`Exec format error` if wrong).
+- `mcp.json` is not part of the release tarball — render it with `install.sh`, or start from `config/mcp.json.example` and edit the URL.
+- `AGENTS.md`, the prompts, and most skills encode one person's workflow; treat them as a starting point, not as defaults.
+- pi itself is MIT and is not redistributed here — see [NOTICE](NOTICE) for bundled skill provenance.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Vendored skills keep their upstream licenses (provenance table in [NOTICE](NOTICE)); key handling and reporting in [SECURITY.md](SECURITY.md).
