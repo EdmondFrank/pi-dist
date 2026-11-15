@@ -121,6 +121,7 @@ $AGENT_DIR/skills/<name>/SKILL.md    49 bundled — /skill:<name> or auto-select
 $AGENT_DIR/prompts/<name>.md         2 bundled (plan, handoff) — /<name>
 $AGENT_DIR/agents/<name>.md          8 bundled subagents (worker, planner, scout, …)
 $AGENT_DIR/AGENTS.md                 global instructions, prepended to every session
+$AGENT_DIR/APPEND_SYSTEM.md          extra system-prompt text, no host-specific values
 ```
 
 ```bash

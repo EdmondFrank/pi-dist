@@ -138,6 +138,15 @@ else
   done
 fi
 
+# Environment facts appended to the system prompt: remote MCP servers vs this host.
+# Installed even when settings.json is kept, but never clobbers local edits without --force.
+if [ ! -e "$AGENT_DIR/APPEND_SYSTEM.md" ] || [ "$FORCE" = 1 ]; then
+  [ -e "$AGENT_DIR/APPEND_SYSTEM.md" ] && run cp "$AGENT_DIR/APPEND_SYSTEM.md" "$AGENT_DIR/APPEND_SYSTEM.md.bak"
+  run cp "$HERE/config/APPEND_SYSTEM.md" "$AGENT_DIR/APPEND_SYSTEM.md"
+else
+  echo "   APPEND_SYSTEM.md exists — keeping it (use --force to replace)"
+fi
+
 # ---------------------------------------------------------------- provider
 EXHUB_BASE_URL="${EXHUB_BASE_URL:-http://localhost:9069/openai/v1}"
 EXHUB_API_KEY="${EXHUB_API_KEY:-exhub-local}"
