@@ -2,14 +2,16 @@
 
 This repository holds build scripts and portable configuration for the
 [pi coding agent](https://pi.dev). It does not redistribute pi, its sources, or a
-compiled binary: `build.sh` downloads the npm release at build time.
+compiled binary: `build.sh` downloads the npm release at build time, and
+`build-acp.sh` does the same for the `pi-acp` ACP adapter.
 
 ## Runtime (not redistributed)
 
 | Component | License | Notes |
 |---|---|---|
 | `@earendil-works/pi-coding-agent` | MIT | fetched with `npm pack` during `build.sh` |
-| Bun | MIT | embedded by `bun build --compile` into the produced binary only |
+| `pi-acp` | MIT, © Sergii Kozak | ACP adapter, fetched with `npm pack` during `build-acp.sh`; not present in this repository |
+| Bun | MIT | embedded by `bun build --compile` into the produced binaries only |
 
 ## Bundled skills
 

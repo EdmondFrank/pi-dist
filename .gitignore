@@ -15,3 +15,6 @@ release/
 
 # pi-web staging (fetched by build-web.sh)
 src-web/
+
+# pi-acp staging (fetched by build-acp.sh)
+src-acp/

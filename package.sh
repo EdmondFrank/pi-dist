@@ -31,6 +31,16 @@ else
   echo "note: out/pi-web missing — run ./build-web.sh to include the dashboard"
 fi
 
+# ACP adapter (optional; build it with ./build-acp.sh).
+ACP_COUNT=0
+for f in "$HERE"/out/pi-acp-*; do
+  if [ -f "$f" ]; then
+    cp "$f" "$STAGE/"
+    ACP_COUNT=$((ACP_COUNT + 1))
+  fi
+done
+[ "$ACP_COUNT" -gt 0 ] || echo "note: no out/pi-acp-* found — run ./build-acp.sh to include the ACP adapter"
+
 TGZ="$HERE/release/pi-$VERSION-$SLUG.tar.gz"
 COPYFILE_DISABLE=1 tar --no-xattrs -czf "$TGZ" -C "$HERE/release" "pi-$VERSION-$SLUG" 2>/dev/null \
   || COPYFILE_DISABLE=1 tar czf "$TGZ" -C "$HERE/release" "pi-$VERSION-$SLUG"

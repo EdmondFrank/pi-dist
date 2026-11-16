@@ -2,12 +2,13 @@
 
 Self-contained [pi coding agent](https://pi.dev) + portable config, so a fresh machine gets a working agent without installing Node.js.
 
-Built artifact: **pi 1.5.0**, single executable, ~77 MB, bun-embedded runtime.
+Built artifact: **pi 1.5.0**, single executable, ~77 MB, bun-embedded runtime. Optional extras from the same sources: the **pi-web** dashboard (needs bun) and the **pi-acp** adapter (~61 MB) that lets ACP clients — Emacs `agent-shell`, Zed — drive it.
 
 ```bash
-./build.sh 1.5.0 bun-darwin-arm64    # build  -> out/
+./build.sh 1.5.0 bun-darwin-arm64    # build     -> out/
 ./build.sh 1.5.0 bun-android-arm64    # Termux/Android (bionic PIE) -> out/pi-android-arm64
-./install.sh                         # install -> ~/.local/{bin,lib/pi} + ~/.pi/agent
+./build-acp.sh                       # optional  -> out/pi-acp-<platform>
+./install.sh                         # install   -> ~/.local/{bin,lib/pi} + ~/.pi/agent
 ```
 
 ## Usage
@@ -151,7 +152,7 @@ Raft's agents (`raft-computer`) do **not** spawn the `pi` CLI — the daemon imp
 
 `pi --version` here reports `1.5.0`, i.e. what Raft actually runs — not `0.1.0` (the Zig rewrite at `~/.cargo/bin/pi`) and not `1.0.63` (`runtime-cli-versions.json`, which is the Raft runtime slot).
 
-## Verified (2026-11-15, darwin-arm64)
+## Verified (2026-11-16, darwin-arm64)
 
 | Check | Result |
 |---|---|
@@ -163,6 +164,8 @@ Raft's agents (`raft-computer`) do **not** spawn the `pi` CLI — the daemon imp
 | end-to-end `install.sh` into clean prefix, then `pi -p …` | ✅ |
 | session writer | ✅ `$AGENT_DIR/sessions/<cwd-slug>/<ts>_<id>.jsonl` |
 | Ubuntu 18.04 amd64 (Docker, glibc 2.27) | ✅ install + model + codemode tool call |
+| ACP adapter (`pi-acp`) ↔ pi 1.5.0 | ✅ initialize / session/new / prompt ("OK") via `scripts/acp-smoke.py` |
+| Emacs `agent-shell` end-to-end | ✅ `agent-shell-pi-start-agent` → prompt answered (headless, `emacs -Q --batch`) |
 | MCP: 17 servers connect (`pi mcp list`) | ✅ all connected |
 | codemode + MCP tool call (`todo get_items`) | ✅ |
 | bundled skills / subagents | 49 skills, 8 agents |
@@ -176,9 +179,12 @@ LICENSE                  MIT (this repository)
 NOTICE                   provenance for bundled third-party skills
 SECURITY.md              key handling + how to report
 build.sh                 build from the npm release (tarball -> bun compile -> assets)
+build-acp.sh             build the ACP adapter (pi-acp -> bun compile -> single binary)
+build-web.sh             stage the pi-web dashboard from the npm release
 package.sh               stage binary + assets + config into release/<name>.tar.gz + sha256
 install.sh               install binary + config on a machine (no Node needed)
 TERMUX.md                unpack + install on Android (Termux), incl. known limits
+scripts/acp-smoke.py     ACP client used to smoke-test pi-acp (handshake, optional prompt)
 release/                 shippable tarballs (gitignored)
 out/                     build output: pi-<platform>, package.json, theme/, assets/, export-html/, photon_rs_bg.wasm
 config/
@@ -186,10 +192,12 @@ config/
   models.json.tmpl       provider template: ${EXHUB_BASE_URL} / ${EXHUB_API_KEY}
   mcp.json.tmpl          17 MCP servers, ${EXHUB_ORIGIN} + ${PI_PROJECT_DIR}
   mcp.json.example       single-server example (LAN URL, not installed)
+  agent-shell-pi-dist.el optional Emacs snippet wiring agent-shell to this dist
   AGENTS.md              global agent instructions
   skills/                49 skills: ~/.pi/agent (13) + ~/.aider-desk (36)
   prompts/ extensions/   2 prompts, 3 extensions from ~/.pi/agent
   agents/                8 subagent definitions from ~/.pi/agent/agents
+locks/                   vendored package-locks (pi-web, pi-acp) for reproducible installs
 src/                     extracted npm release + node_modules (gitignored, reproducible)
 ```
 
@@ -216,6 +224,7 @@ cd ~/Code/pi-dist-build
 export https_proxy=http://127.0.0.1:7890 http_proxy=$https_proxy   # if needed
 ./build.sh 1.5.0 bun-darwin-arm64
 ./build.sh 1.5.0 bun-linux-x64       # emit for another target
+./build-acp.sh 0.0.34 bun-darwin-arm64   # ACP adapter, same recipe
 ```
 
 Two non-obvious requirements baked into `build.sh`:
@@ -261,6 +270,57 @@ Use `PI_WEB_REGISTRY=https://registry.npmmirror.com ./build-web.sh` if the defau
 
 **Networking note:** `http_proxy` in the environment also catches loopback, so `http://127.0.0.1:30141` returns 502. Keep `127.0.0.1,localhost,::1` in `no_proxy` — `::1` matters because `localhost` resolves there first and the hub is reached as `localhost:9069`.
 
+## ACP adapter (pi-acp) — Emacs agent-shell, Zed, …
+
+[ACP](https://agentclientprotocol.com) is how editors drive an agent: the client spawns an adapter over stdio and the adapter drives the agent. For pi that adapter is [`pi-acp`](https://github.com/svkozak/pi-acp) (MIT, © Sergii Kozak). It is bundled here as a second self-contained binary built from the npm release, so the client needs neither Node nor npm:
+
+```bash
+./build-acp.sh 0.0.34     # -> out/pi-acp-<platform> (~61 MB, ~24 MB gzipped)
+./install.sh              # also installs ~/.local/lib/pi-acp + a pi-acp shim
+```
+
+`install.sh --no-acp` skips it; `package.sh` adds `out/pi-acp-*` to the release tarball when present. `build-acp.sh` runs `scripts/acp-smoke.py` (handshake) after compiling — `PI_ACP_SMOKE_PROMPT=1 ./build-acp.sh` also sends one prompt, which costs tokens.
+
+The shim at `$PREFIX/bin/pi-acp` is what clients spawn. It pins the adapter to *this* prefix's pi, so PATH order never decides which `pi` is driven:
+
+| Variable | Shim default | Effect |
+|---|---|---|
+| `PI_ACP_PI_COMMAND` | `$PREFIX/lib/pi/pi` | the `pi` the adapter spawns (`pi --mode rpc --no-themes`) |
+| `PI_ACP_ENABLE_EMBEDDED_CONTEXT` | `true` | advertise `promptCapabilities.embeddedContext`, so client-attached files/regions arrive as embedded resources instead of pasted text |
+
+### Emacs agent-shell
+
+`agent-shell` already ships `agent-shell-pi.el` (identifier `pi`), so one command is enough once the shim is on `PATH`:
+
+```
+M-x agent-shell-pi-start-agent          ; a Pi shell in the current project
+M-x agent-shell                         ; or the picker, then "Pi"
+```
+
+What the adapter gives agent-shell:
+
+| Feature | Behaviour |
+|---|---|
+| streaming | assistant text as `agent_message_chunk` |
+| tool calls | `tool_call` / `tool_call_update` with file locations; `edit` also emits a structured diff |
+| sessions | `session/load` reattaches through `~/.pi/pi-acp/session-map.json` to the same JSONL session pi writes |
+| slash commands | `~/.pi/agent/prompts/**` + pi skills as `/skill:<name>`; plus `/compact`, `/autocompact`, `/export`, `/session`, `/name`, `/queue`, `/steering`, `/follow-up` |
+| model & thinking | `session/new` `configOptions` (`model`, `thought_level`), switchable from the client |
+| context usage | real `contextUsage` per turn as `usage_update` |
+
+Pi skills, prompts, extensions and `AGENTS.md` are all loaded by pi itself, so agent-shell sessions behave like the TUI. Startup info (pi version, skills, prompts) is printed into the session unless `"quietStartup": true` is set in `settings.json`; the adapter still prints a "new version available" line when it can reach npm, which is harmless offline.
+
+If GUI Emacs cannot see `~/.local/bin` (or the dist used a non-default `--agent-dir`), load the bundled snippet instead of fighting `exec-path`:
+
+```elisp
+(load "/path/to/pi-dist/config/agent-shell-pi-dist.el")
+;; M-x customize-group RET agent-shell-pi-dist
+;;   agent-shell-pi-dist-acp-shim     -> /Users/me/.local/bin/pi-acp
+;;   agent-shell-pi-dist-agent-dir    -> /path/to/agent-dir (only if not ~/.pi/agent)
+```
+
+Limits (upstream): no ACP filesystem or terminal delegation — pi reads, writes and executes locally; MCP servers passed in `session/new` are stored but not forwarded to pi (pi uses its own `mcp.json`); thoughts are not streamed separately from assistant text.
+
 ## Config: what was stripped
 
 `settings.json` keeps `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `theme`, `hideThinkingBlock`, `enabledModels`, `compaction`. The `packages` array was removed:
@@ -288,6 +348,7 @@ Sessions live under `$AGENT_DIR/sessions` (default `~/.pi/agent/sessions`) and a
 
 - Per-platform build; no cross-arch fallback (`Exec format error` if wrong).
 - `android-arm64` is bun's `bun-linux-aarch64-android` runtime: the same `build.sh` works, the result links only `libc/libm/libdl` and runs on Termux (see [TERMUX.md](TERMUX.md)). `pi-web` is not shipped there — it is bun-packaged.
+- The ACP adapter is ~61 MB (24 MB gzipped) per platform because it embeds a Bun runtime; ACP clients also get no filesystem/terminal delegation, since pi edits and executes locally.
 - `mcp.json` is not part of the release tarball — render it with `install.sh`, or start from `config/mcp.json.example` and edit the URL.
 - `AGENTS.md`, the prompts, and most skills encode one person's workflow; treat them as a starting point, not as defaults.
 - pi itself is MIT and is not redistributed here — see [NOTICE](NOTICE) for bundled skill provenance.

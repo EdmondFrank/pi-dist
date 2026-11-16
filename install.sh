@@ -8,6 +8,7 @@
 #   ./install.sh --force         # overwrite existing config (backs up to *.bak)
 #   ./install.sh --no-mcp        # skip mcp.json (offline / no exhub hub)
 #   ./install.sh --no-web        # skip the browser dashboard (pi-web)
+#   ./install.sh --no-acp        # skip the ACP adapter (pi-acp, for Emacs agent-shell / Zed)
 #   ./install.sh --platform slug # force a build (android-arm64, linux-x64, …)
 #
 # Termux/Android is detected automatically: it installs the bionic build
@@ -35,6 +36,7 @@ FORCE=0
 DRY=0
 WITH_MCP=1
 WITH_WEB=1
+WITH_ACP=1
 if [ "$TERMUX" = 1 ]; then WITH_WEB=0; fi   # pi-web is bun-packaged; no bun on Termux
 PLATFORM_OVERRIDE="${PI_PLATFORM:-}"
 
@@ -69,9 +71,10 @@ while [ $# -gt 0 ]; do
     --no-mcp)    WITH_MCP=0; shift ;;
     --no-web)    WITH_WEB=0; shift ;;
     --web)       WITH_WEB=1; shift ;;
+    --no-acp)    WITH_ACP=0; shift ;;
     --platform)  PLATFORM_OVERRIDE="$2"; shift 2 ;;
     --dry-run)   DRY=1; shift ;;
-    -h|--help)   sed -n '2,16p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,15p' "$0"; exit 0 ;;
     *)           die "unknown option: $1" ;;
   esac
 done
@@ -179,6 +182,44 @@ EOF
   fi
 fi
 
+# ---------------------------------------------------------------- ACP adapter
+# pi-acp is the ACP (Agent Client Protocol) adapter: ACP clients such as Emacs
+# agent-shell or Zed spawn it and it drives `pi --mode rpc` for them. Self
+# contained binary, so the client needs no Node.js either.
+ACP_SRC="$HERE/pi-acp-$PLATFORM"
+[ -f "$ACP_SRC" ] || ACP_SRC="$FROM/pi-acp-$PLATFORM"
+[ -f "$ACP_SRC" ] || ACP_SRC="$FROM/pi-acp-$PLATFORM-baseline"
+LIB_ACP="${PI_ACP_LIB:-$PREFIX/lib/pi-acp}"
+ACP_SHIM="$BIN_DIR/pi-acp"
+if [ "$WITH_ACP" = 0 ]; then
+  echo "   acp: skipped (--no-acp)"
+elif [ ! -f "$ACP_SRC" ]; then
+  echo "   acp: no pi-acp build found (run ./build-acp.sh) — skipping ACP adapter"
+else
+  say "acp $LIB_ACP"
+  run mkdir -p "$LIB_ACP"
+  run install -m 0755 "$ACP_SRC" "$LIB_ACP/pi-acp"
+
+  # The shim pins PI_ACP_PI_COMMAND to this prefix's pi, so the adapter never
+  # resolves `pi` from PATH (GUI Emacs often has a different PATH than a login
+  # shell) and a `pi` on PATH belonging to another tool cannot be picked up.
+  say "acp shim $ACP_SHIM"
+  if [ "$DRY" = 1 ]; then
+    echo "   [dry] write acp shim"
+  else
+    cat > "$ACP_SHIM" <<EOF
+#!/bin/sh
+# pi-acp shim written by pi-dist install.sh — the ACP adapter for this pi.
+PI_ACP_PI_COMMAND="\${PI_ACP_PI_COMMAND:-$LIB/pi}"
+# pi-acp compares against the literal string "true" (not "1").
+PI_ACP_ENABLE_EMBEDDED_CONTEXT="\${PI_ACP_ENABLE_EMBEDDED_CONTEXT:-true}"
+export PI_ACP_PI_COMMAND PI_ACP_ENABLE_EMBEDDED_CONTEXT
+exec "$LIB_ACP/pi-acp" "\$@"
+EOF
+    chmod 0755 "$ACP_SHIM"
+  fi
+fi
+
 # ---------------------------------------------------------------- config
 say "config $AGENT_DIR"
 if [ -e "$AGENT_DIR/settings.json" ] && [ "$FORCE" = 0 ]; then
@@ -249,6 +290,16 @@ else
   env -i PATH="$VERIFY_PATH" "$LIB/pi" --version
 fi
 
+if [ "$WITH_ACP" = 1 ] && [ -x "${ACP_SHIM:-}" ]; then
+  # Closing stdin makes the ACP server shut down; a clean exit proves the
+  # adapter runs here and that the shim resolves its pinned pi.
+  if printf '' | "$ACP_SHIM" >/dev/null 2>&1; then
+    echo "   pi-acp: ok"
+  else
+    echo "   warning: $ACP_SHIM did not exit cleanly" >&2
+  fi
+fi
+
 cat <<EOF
 
 Installed.
@@ -264,6 +315,13 @@ if [ "$WITH_WEB" = 1 ] && [ -d "$WEB_SRC" ]; then
 EOF
 fi
 
+if [ "$WITH_ACP" = 1 ] && [ -x "${ACP_SHIM:-}" ]; then
+  cat <<EOF
+  acp    : $LIB_ACP/pi-acp
+  acp shim: $ACP_SHIM  (spawned by ACP clients: Emacs agent-shell, Zed, ...)
+EOF
+fi
+
 cat <<EOF
 
 Add to PATH if needed:  export PATH="$BIN_DIR:\$PATH"
@@ -275,5 +333,13 @@ if [ "$WITH_WEB" = 1 ] && [ -d "$WEB_SRC" ]; then
 Dashboard:              pi-web            (http://127.0.0.1:30141)
                         pi-web --help     port, hostname, --no-open
                         pi-web status | stop | open
+EOF
+fi
+
+if [ "$WITH_ACP" = 1 ] && [ -x "${ACP_SHIM:-}" ]; then
+  cat <<EOF
+Emacs:                  M-x agent-shell-pi-start-agent   (agent-shell finds pi-acp on PATH)
+                        M-x agent-shell, pick "Pi"       (same, from the agent picker)
+                        adapter check: printf '' | pi-acp && echo acp-ok
 EOF
 fi

@@ -11,10 +11,13 @@ Time: ~3 minutes once the tarball is on the machine.
 ```bash
 cd ~/Code/pi-dist-build
 ./build.sh 1.5.0 bun-linux-x64            # or bun-darwin-arm64
+./build-acp.sh 0.0.34 bun-linux-x64       # optional: ACP adapter (agent-shell, Zed)
 cd out && tar czf pi-1.5.0-linux-x64.tar.gz \
-  pi-linux-x64 package.json theme assets export-html photon_rs_bg.wasm
+  pi-linux-x64 pi-acp-linux-x64 package.json theme assets export-html photon_rs_bg.wasm
 shasum -a 256 pi-1.5.0-linux-x64.tar.gz
 ```
+
+`./package.sh <ver> <slug>` does the same staging (binary + `pi-acp-*` + `pi-web/` if built) and writes the `.sha256` for you.
 
 ### Building for Ubuntu 18.04 / amd64
 
@@ -65,6 +68,8 @@ What it does, in order:
 | binary → `pi` (mode 0755) | `~/.local/lib/pi/pi` |
 | assets next to it | `~/.local/lib/pi/{package.json,theme,assets,export-html,photon_rs_bg.wasm}` |
 | shim `exec ~/.local/lib/pi/pi "$@"` | `~/.local/bin/pi` |
+| ACP adapter (skipped with `--no-acp`) | `~/.local/lib/pi-acp/pi-acp` |
+| shim exporting `PI_ACP_PI_COMMAND=~/.local/lib/pi/pi` | `~/.local/bin/pi-acp` |
 | `settings.json`, `AGENTS.md`, `skills/`, `prompts/`, `extensions/`, `agents/` | `${PI_CODING_AGENT_DIR:-~/.pi/agent}` |
 | `models.json` rendered from template | same dir, mode 0600 |
 | `mcp.json` rendered from template (17 servers) | same dir, mode 0600 — skip with `--no-mcp` |
@@ -135,6 +140,9 @@ pi mcp list | head -6                                       # "…: connected, N
 cd /tmp && pi -p "Reply with exactly: OK" --no-session        # OK
 cd /tmp && pi -p "Use codemode to call todo get_items; answer with the item count" --no-session   # 0  (proves codemode + MCP + worker)
 ls ~/.pi/agent/sessions                                      # session dir appears after a non-ephemeral run
+printf '' | pi-acp && echo acp-ok                            # ACP adapter starts and exits cleanly
+python3 scripts/acp-smoke.py --command pi-acp --cwd /tmp     # ACP handshake (initialize + session/new)
+python3 scripts/acp-smoke.py --command pi-acp --cwd /tmp --prompt   # + one real prompt (costs tokens)
 ```
 
 Skills/extensions are picked up from `~/.pi/agent` automatically; `pi -p "list your skills"` should name the bundled ones. `pi list` is empty **by design** — `packages[]` was stripped, see README.
@@ -151,6 +159,20 @@ pi -p "summarize this repo" --no-session --mode text
 - Sessions are JSONL v3 under `~/.pi/agent/sessions/<cwd-slug>/` — same format Raft writes to `.pi-sessions`, so `@agegr/pi-web` can browse them.
 - Tools run with your shell privileges; there is no sandbox.
 
+### From Emacs (agent-shell)
+
+```elisp
+;; needs agent-shell + pi-acp on exec-path (both come from this bundle)
+M-x agent-shell-pi-start-agent     ; or: M-x agent-shell, pick "Pi"
+```
+
+The shell behaves like the TUI: skills, prompts and `AGENTS.md` come from
+`~/.pi/agent`, `/plan` and `/skill:<name>` are slash commands, the model
+selector maps to the `model` config option, and context usage is reported per
+turn. Sessions written from Emacs are the same JSONL files the TUI resumes.
+If Emacs cannot find `pi-acp`, load `config/agent-shell-pi-dist.el` and set
+`agent-shell-pi-dist-acp-shim` (see README).
+
 ## 7. Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -166,6 +188,10 @@ pi -p "summarize this repo" --no-session --mode text
 | `pi mcp list` shows `error` / refused | hub not reachable at `EXHUB_ORIGIN` | `nc -z <host> 9069`; re-render with the right origin |
 | `ModuleNotFound resolving "./src/extensions/codemode/worker.ts"` | binary built without the codemode worker entrypoint | rebuild with `./build.sh` (it adds the entrypoint); temporary workaround: set `"exposure": "direct"` per server |
 | bundled agents fail on `solo_tool` | agents need the Solo package | `pi install git:github.com/HazAT/pi-solo` |
+| agent-shell: `pi-acp … not found` | adapter not installed, or `~/.local/bin` is not in Emacs' `exec-path` | `./install.sh` (installs it); in GUI Emacs load `config/agent-shell-pi-dist.el` and set `agent-shell-pi-dist-acp-shim` |
+| agent-shell: `Session not ready... please wait` | prompt sent before `session/new` finished | wait for the `Pi>` prompt; the adapter needs a second to start pi |
+| agent-shell shows no reply, pi fails to spawn | shim's pinned pi moved/was removed | re-run `./install.sh --force` (rewrites `~/.local/bin/pi-acp`) |
+| ACP session has no MCP tools | pi-acp does not forward ACP `mcpServers` | expected: pi uses its own `mcp.json` (17 servers) |
 
 ## 8. Maintenance
 
@@ -178,6 +204,7 @@ pi -p "summarize this repo" --no-session --mode text
 | Add a package again | `pi install git:github.com/HazAT/pi-solo` (needs npm/pnpm/bun on the box) |
 | Refresh skills/agents | edit `config/skills`, `config/agents`, then `./install.sh --force` |
 | Change MCP set | edit `config/mcp.json.tmpl`, re-run `./install.sh --force` |
+| Upgrade ACP adapter | `./build-acp.sh <ver> bun-<plat>` then `./install.sh --force` (pin a new `locks/pi-acp-<ver>/package-lock.json`) |
 
 ## 9. Security
 
