@@ -10,6 +10,10 @@ out/
 .DS_Store
 *.log
 
+# aider-desk local state (tasks, tmp, prompt history)
+.aider-desk/
+.aider.input.history
+
 # releases
 release/
 
