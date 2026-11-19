@@ -17,9 +17,10 @@
     "exhub/MiniMax-M3.1-Flash"
   ],
   "compaction": {
+    "enabled": true,
     "modelOverrides": {
       "exhub/MiniMax-M3.1-Flash": {
-        "reserveTokens": 132000,
+        "reserveTokens": 45000,
         "keepRecentTokens": 20000
       },
       "exhub/deepseek-v4.1-flash": {
