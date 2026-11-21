@@ -9,6 +9,7 @@
 #   ./install.sh --no-mcp        # skip mcp.json (offline / no exhub hub)
 #   ./install.sh --no-web        # skip the browser dashboard (pi-web)
 #   ./install.sh --no-acp        # skip the ACP adapter (pi-acp, for Emacs agent-shell / Zed)
+#   ./install.sh --wezterm       # also install ~/.config/wezterm/pi.lua (keyboard protocol + Emacs copy mode)
 #   ./install.sh --platform slug # force a build (android-arm64, linux-x64, …)
 #
 # Termux/Android is detected automatically: it installs the bionic build
@@ -32,11 +33,13 @@ if [ "$TERMUX" = 1 ]; then
   PREFIX="$TERMUX_USR"   # == Termux $PREFIX, already on PATH
 fi
 AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+WEZTERM_DIR="${PI_WEZTERM_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/wezterm}"
 FORCE=0
 DRY=0
 WITH_MCP=1
 WITH_WEB=1
 WITH_ACP=1
+WITH_WEZTERM=0   # opt-in: the config governs every program in that terminal, not just pi
 if [ "$TERMUX" = 1 ]; then WITH_WEB=0; fi   # pi-web is bun-packaged; no bun on Termux
 PLATFORM_OVERRIDE="${PI_PLATFORM:-}"
 
@@ -72,9 +75,10 @@ while [ $# -gt 0 ]; do
     --no-web)    WITH_WEB=0; shift ;;
     --web)       WITH_WEB=1; shift ;;
     --no-acp)    WITH_ACP=0; shift ;;
+    --wezterm)   WITH_WEZTERM=1; shift ;;
     --platform)  PLATFORM_OVERRIDE="$2"; shift 2 ;;
     --dry-run)   DRY=1; shift ;;
-    -h|--help)   sed -n '2,15p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,16p' "$0"; exit 0 ;;
     *)           die "unknown option: $1" ;;
   esac
 done
@@ -220,6 +224,50 @@ EOF
   fi
 fi
 
+# ---------------------------------------------------------------- wezterm
+# Opt-in, and only ever additive: pi.lua holds the portable settings, while an
+# existing wezterm.lua is left alone (--force backs it up before replacing).
+WEZTERM_CFG="$HERE/config/wezterm"
+if [ "$TERMUX" = 1 ] && [ "$WITH_WEZTERM" = 1 ]; then
+  echo "   wezterm: skipped (Termux has no WezTerm)"
+  WITH_WEZTERM=0
+fi
+if [ "$WITH_WEZTERM" = 0 ]; then
+  echo "   wezterm: skipped (--wezterm installs config/wezterm/pi.lua)"
+else
+  say "wezterm $WEZTERM_DIR"
+  run mkdir -p "$WEZTERM_DIR"
+  [ -e "$WEZTERM_DIR/pi.lua" ] && run cp "$WEZTERM_DIR/pi.lua" "$WEZTERM_DIR/pi.lua.bak"
+  run cp "$WEZTERM_CFG/pi.lua" "$WEZTERM_DIR/pi.lua"
+
+  if [ ! -e "$WEZTERM_DIR/wezterm.lua" ]; then
+    run cp "$WEZTERM_CFG/wezterm.lua" "$WEZTERM_DIR/wezterm.lua"
+  elif [ "$FORCE" = 1 ]; then
+    run cp "$WEZTERM_DIR/wezterm.lua" "$WEZTERM_DIR/wezterm.lua.bak"
+    run cp "$WEZTERM_CFG/wezterm.lua" "$WEZTERM_DIR/wezterm.lua"
+  elif grep -q 'pi\.lua' "$WEZTERM_DIR/wezterm.lua"; then
+    echo "   wezterm.lua already loads pi.lua — keeping it"
+  else
+    echo "   wezterm.lua exists — keeping it; add these two lines to it:"
+    echo "     local pi = dofile(wezterm.config_dir .. '/pi.lua')"
+    echo "     for k, v in pairs(pi) do config[k] = v end"
+  fi
+
+  # show-keys exits 0 even when the config failed to load, so assert on a
+  # binding that only pi.lua defines (C-w has no default in copy_mode).
+  if ! command -v wezterm >/dev/null 2>&1; then
+    echo "   wezterm: not on PATH — config written, nothing to check"
+  elif [ "$DRY" = 1 ]; then
+    echo "   [dry] wezterm --config-file $WEZTERM_DIR/wezterm.lua show-keys --lua --key-table copy_mode"
+  elif wezterm --config-file "$WEZTERM_DIR/wezterm.lua" show-keys --lua --key-table copy_mode 2>/dev/null \
+       | grep -qF "{ key = 'w', mods = 'CTRL'"; then
+    echo "   wezterm: config ok"
+  else
+    echo "   warning: wezterm loaded $WEZTERM_DIR/wezterm.lua without pi.lua" >&2
+    echo "            add the dofile lines above, or check for a Lua error" >&2
+  fi
+fi
+
 # ---------------------------------------------------------------- config
 say "config $AGENT_DIR"
 if [ -e "$AGENT_DIR/settings.json" ] && [ "$FORCE" = 0 ]; then
@@ -319,6 +367,13 @@ if [ "$WITH_ACP" = 1 ] && [ -x "${ACP_SHIM:-}" ]; then
   cat <<EOF
   acp    : $LIB_ACP/pi-acp
   acp shim: $ACP_SHIM  (spawned by ACP clients: Emacs agent-shell, Zed, ...)
+EOF
+fi
+
+if [ "$WITH_WEZTERM" = 1 ]; then
+  cat <<EOF
+  wezterm: $WEZTERM_DIR/pi.lua
+           copy mode (Ctrl+Shift+X): C-a/C-e, C-f/C-b, C-n/C-p, M-f/M-b, C-v/M-v, C-w
 EOF
 fi
 

@@ -73,6 +73,7 @@ What it does, in order:
 | `settings.json`, `AGENTS.md`, `skills/`, `prompts/`, `extensions/`, `agents/` | `${PI_CODING_AGENT_DIR:-~/.pi/agent}` |
 | `models.json` rendered from template | same dir, mode 0600 |
 | `mcp.json` rendered from template (17 servers) | same dir, mode 0600 — skip with `--no-mcp` |
+| WezTerm config, opt-in — skipped without `--wezterm` | `~/.config/wezterm/{pi.lua,wezterm.lua}` |
 
 Existing config is preserved unless `--force` (which backs up `settings.json` → `.bak`). Use `--prefix`, `--agent-dir`, `--from` for non-default layouts.
 
@@ -192,6 +193,9 @@ If Emacs cannot find `pi-acp`, load `config/agent-shell-pi-dist.el` and set
 | agent-shell: `Session not ready... please wait` | prompt sent before `session/new` finished | wait for the `Pi>` prompt; the adapter needs a second to start pi |
 | agent-shell shows no reply, pi fails to spawn | shim's pinned pi moved/was removed | re-run `./install.sh --force` (rewrites `~/.local/bin/pi-acp`) |
 | ACP session has no MCP tools | pi-acp does not forward ACP `mcpServers` | expected: pi uses its own `mcp.json` (17 servers) |
+| WezTerm: `--wezterm` warns "loaded … without pi.lua" | existing `wezterm.lua` does not merge the snippet | add the two `dofile` lines the installer prints |
+| WezTerm: `Shift+Enter` inserts a line instead of submitting | build without the Kitty keyboard protocol — `enable_kitty_keyboard` is ignored | WezTerm ≥ 2023; on older builds use `Ctrl+J` |
+| WezTerm panics `Could not resolve randr Event … response_type 103` | OpenGL front end hits a DRI2 event that lands inside RandR's event range on this X server | add `front_end = 'Software'` to `wezterm.lua` |
 
 ## 8. Maintenance
 

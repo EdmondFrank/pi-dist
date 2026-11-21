@@ -193,6 +193,7 @@ config/
   mcp.json.tmpl          17 MCP servers, ${EXHUB_ORIGIN} + ${PI_PROJECT_DIR}
   mcp.json.example       single-server example (LAN URL, not installed)
   agent-shell-pi-dist.el optional Emacs snippet wiring agent-shell to this dist
+  wezterm/               optional WezTerm config: keyboard protocol, Alt+Enter, Emacs copy mode
   AGENTS.md              global agent instructions
   skills/                49 skills: ~/.pi/agent (13) + ~/.aider-desk (36)
   prompts/ extensions/   2 prompts, 3 extensions from ~/.pi/agent
@@ -320,6 +321,56 @@ If GUI Emacs cannot see `~/.local/bin` (or the dist used a non-default `--agent-
 ```
 
 Limits (upstream): no ACP filesystem or terminal delegation — pi reads, writes and executes locally; MCP servers passed in `session/new` are stored but not forwarded to pi (pi uses its own `mcp.json`); thoughts are not streamed separately from assistant text.
+
+## WezTerm (optional)
+
+`config/wezterm/` is a two-file WezTerm setup for pi, installed with `./install.sh --wezterm`. It is **opt-in and additive** — WezTerm's config governs every program in that terminal, not just pi, so nothing is written unless you ask, and an existing `wezterm.lua` is never replaced (only `--force` does, after a `.bak`).
+
+| File | Role |
+|---|---|
+| `pi.lua` | plain table: `enable_kitty_keyboard`, `Alt+Enter` → `CSI 13;3u`, Emacs `copy_mode` |
+| `wezterm.lua` | minimal standalone config that merges `pi.lua`; written only when none exists |
+
+If you already have a `wezterm.lua`, add two lines to it:
+
+```lua
+local pi = dofile(wezterm.config_dir .. '/pi.lua')
+for k, v in pairs(pi) do config[k] = v end
+```
+
+Use `dofile`, not `require 'pi'` — WezTerm does not put the config directory on `package.path`.
+
+The installer verifies the result the only way that works: `show-keys` exits 0 even on a config that failed to load, so it asserts on `C-w` in the `copy_mode` dump, a binding that only `pi.lua` defines.
+
+### Emacs copy mode
+
+`Ctrl+Shift+X` enters copy mode. Normal-mode keys are untouched, so the shell's own keymap still does line editing; the Emacs chords only replace WezTerm's scrollback keys.
+
+| Key | Action |
+|---|---|
+| `C-a` / `C-e` | start / end of line |
+| `C-f` / `C-b` | forward / back one character (WezTerm's defaults page up/down here) |
+| `C-n` / `C-p` | next / previous line |
+| `M-f` / `M-b` | forward / back one word |
+| `C-v` / `M-v` | page down / up |
+
+`C-v` is block-select by default; inside copy mode that moves to `Ctrl+Shift+V` (outside copy mode the key is still paste).
+| `C-w` / `M-w` | kill-region: copy and leave copy mode |
+
+The Vi table stays underneath (`h/j/k/l`, `v`, `V`, `y`, `H/L/M`, `g/G`), and `Space`/`v`/`V` still set cell/line selection. Declaring `key_tables.copy_mode` replaces the built-in table, so a custom Vi table of your own would be overridden by the merge — keep that in mind if you have one.
+
+### Version limits
+
+Checked against WezTerm `20220903` (the last release that runs on glibc 2.27, i.e. Ubuntu 18.04):
+
+| Behaviour | 20220903 | Needs |
+|---|---|---|
+| `wezterm.config_builder()` | ✗ nil — pi's own `terminal-setup` snippet fails on it | WezTerm ≥ 2022-11 |
+| `enable_kitty_keyboard` | ignored silently: `Shift+Enter` arrives as `\n`, indistinguishable from `Ctrl+J` | a build with the Kitty protocol |
+| `Alt+Enter` → `CSI 13;3u` | ✅ works (verified byte-for-byte) | any build |
+| OpenGL front end | ✗ panics `Could not resolve randr Event … response_type 103` on some X servers | add `front_end = 'Software'` to your config |
+
+`config/wezterm/*.lua` therefore avoids `config_builder`, and the `front_end` workaround stays out of it — it is a host property, not a pi property.
 
 ## Config: what was stripped
 
